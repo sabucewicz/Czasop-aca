@@ -1,0 +1,6 @@
+{
+  "name": "CzasoPłaca — Licznik Godzin i Zarobków",
+  "description": "Aplikacja webowa do liczenia godzin pracy, autostartu, przeliczania stawki 31,50 zł/h na żywo oraz archiwum do 3 tygodni wstecz w LocalStorage.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

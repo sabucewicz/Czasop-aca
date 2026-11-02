@@ -1,11 +1,28 @@
-<div align="center">
+# CzasoPłaca — Licznik Godzin i Zarobków
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+Prosta, responsywna aplikacja webowa (z ciemnym i jasnym motywem) do liczenia przepracowanych godzin i automatycznego przeliczania zarobków w czasie rzeczywistym z zapisem w `localStorage`.
 
-  <h1>Built with AI Studio</h2>
+## Funkcje
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+- **Stoper Start / Stop**: Rozpoczynanie i zatrzymywanie licznika czasu pracy z zapisem do `localStorage`.
+- **Przeliczanie stawki na żywo**: Automatyczne mnożenie przepracowanego czasu przez stawkę **31,50 zł/h**.
+- **Autostart**: Możliwość ustawienia automatycznego startu o wybranej godzinie (zatrzymanie pracy przyciskiem **Stop** jest zawsze ręczne).
+- **Tygodniowe podsumowanie (Poniedziałek – Niedziela)**: Wykres słupkowy z podziałem na dni tygodnia oraz edycja i dodawanie wpisów.
+- **Archiwum do 3 tygodni wstecz**: Automatyczny zapis zamkniętych tygodni na dole strony (gdy dochodzi 4. tydzień, najstarszy zapis jest automatycznie usuwany z pamięci).
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+## Uruchomienie lokalne
 
-</div>
+```bash
+npm install
+npm run dev
+```
+
+## Budowanie wersji produkcyjnej
+
+```bash
+npm run build
+```
+
+## Wdrożenie na GitHub Pages
+
+Repozytorium zawiera gotowy plik `.github/workflows/deploy.yml`. Po wypchnięciu kodu na gałąź `main` i włączeniu w ustawieniach repozytorium **Settings → Pages → Source: GitHub Actions**, aplikacja automatycznie zbuduje się i opublikuje pod adresem GitHub Pages.
