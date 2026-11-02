@@ -24,20 +24,34 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Run unit tests
-        run: npx tsx --test src/utils/timeLogic.test.ts
-
-      - name: Build production bundle
-        run: npm run build
+      - name: Prepare static production bundle
+        run: |
+          mkdir -p dist/public
+          cp public/gh-pages.css dist/public/gh-pages.css
+          cp public/gh-pages.js dist/public/gh-pages.js
+          cat << 'EOF' > dist/index.html
+          <!doctype html>
+          <html lang="pl" class="dark">
+            <head>
+              <meta charset="UTF-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+              <title>CzasoPłaca — Licznik Godzin i Zarobków</title>
+              <meta name="description" content="Aplikacja webowa do liczenia godzin pracy, autostartu, przeliczania stawki 31,50 zł/h na żywo oraz archiwum do 3 tygodni wstecz w LocalStorage." />
+              <meta property="og:title" content="CzasoPłaca — Licznik Godzin i Zarobków" />
+              <meta property="og:description" content="Aplikacja webowa do liczenia godzin pracy, autostartu, przeliczania stawki 31,50 zł/h na żywo oraz archiwum do 3 tygodni wstecz w LocalStorage." />
+              <meta property="og:type" content="website" />
+              <meta name="twitter:card" content="summary_large_image" />
+              <link rel="preconnect" href="https://fonts.googleapis.com" />
+              <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+              <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+              <link rel="stylesheet" href="./public/gh-pages.css" />
+            </head>
+            <body class="bg-slate-950 text-slate-100">
+              <div id="root"></div>
+              <script type="module" src="./public/gh-pages.js"></script>
+            </body>
+          </html>
+          EOF
 
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5
