@@ -13,9 +13,31 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
   </head>
-  <body>
+  <body class="bg-slate-950 text-slate-100">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      (function () {
+        var scripts = document.querySelectorAll('script[type="module"]');
+        var isRawBranch = false;
+        for (var i = 0; i < scripts.length; i++) {
+          if (scripts[i].getAttribute('src') === '/src/main.tsx') {
+            isRawBranch = true;
+          }
+        }
+        if (isRawBranch && window.location.hostname.indexOf('github.io') !== -1) {
+          var link = document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = './public/gh-pages.css';
+          document.head.appendChild(link);
+
+          var s = document.createElement('script');
+          s.type = 'module';
+          s.src = './public/gh-pages.js';
+          document.body.appendChild(s);
+        }
+      })();
+    </script>
   </body>
 </html>
 
