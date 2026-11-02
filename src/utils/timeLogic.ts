@@ -23,8 +23,9 @@ export interface ArchivedWeek {
 export interface AutostartConfig {
   enabled: boolean;
   time: string; // "HH:MM", e.g., "08:00"
-  startFromScheduledTime: boolean; // whether autostart counts from the set time or moment of opening
+  nextTriggerTimestamp: number | null; // Exact epoch ms when next autostart should fire
   lastTriggeredDate: string | null; // YYYY-MM-DD
+  lastStoppedDate: string | null; // YYYY-MM-DD
 }
 
 export interface ActiveSession {
@@ -52,6 +53,15 @@ export function toDateString(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+/**
+ * Formats a Date object as local HH:MM
+ */
+export function toTimeString(date: Date): string {
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
 }
 
 /**
@@ -173,7 +183,6 @@ export function archiveWeekWithCap(
 ): ArchivedWeek[] {
   const filtered = existingArchive.filter((w) => w.weekKey !== newWeek.weekKey);
   const combined = [newWeek, ...filtered];
-  // Sort descending by weekKey (newest first)
   combined.sort((a, b) => (a.weekKey < b.weekKey ? 1 : a.weekKey > b.weekKey ? -1 : 0));
   return combined.slice(0, maxWeeks);
 }
@@ -214,7 +223,6 @@ export function checkAndRolloverWeek(state: AppStorageState, now: Date): AppStor
     return state;
   }
 
-  // Only archive if the previous week had entries or if it was a past week
   let updatedArchive = state.archivedWeeks;
   if (state.entries.length > 0) {
     const summary = summarizeWeekEntries(state.currentWeekKey, state.entries, state.hourlyRate);
@@ -230,32 +238,18 @@ export function checkAndRolloverWeek(state: AppStorageState, now: Date): AppStor
 }
 
 /**
- * Evaluates whether autostart should trigger right now.
- * Stop is ALWAYS manual ("stop jest zawsze w moim zakresie").
+ * Computes the next upcoming timestamp for a given "HH:MM" time relative to `now`.
+ * - If "HH:MM" today is still in the future (> now), returns today at HH:MM.
+ * - If "HH:MM" today has already passed (<= now), returns tomorrow at HH:MM.
  */
-export function evaluateAutostart(
-  autostart: AutostartConfig,
-  activeSession: ActiveSession | null,
-  now: Date
-): { shouldStart: boolean; startTimestamp: number; startTimeFormatted: string } {
-  if (!autostart.enabled || !autostart.time) {
-    return { shouldStart: false, startTimestamp: 0, startTimeFormatted: '' };
-  }
-  if (activeSession && activeSession.isRunning) {
-    return { shouldStart: false, startTimestamp: 0, startTimeFormatted: '' };
-  }
-
-  const todayStr = toDateString(now);
-  if (autostart.lastTriggeredDate === todayStr) {
-    return { shouldStart: false, startTimestamp: 0, startTimeFormatted: '' };
-  }
-
-  const [targetH, targetM] = autostart.time.split(':').map(Number);
+export function computeNextAutostartTimestamp(timeStr: string, now: Date): number | null {
+  if (!timeStr) return null;
+  const [targetH, targetM] = timeStr.split(':').map(Number);
   if (!Number.isFinite(targetH) || !Number.isFinite(targetM)) {
-    return { shouldStart: false, startTimestamp: 0, startTimeFormatted: '' };
+    return null;
   }
 
-  const scheduledDate = new Date(
+  const candidate = new Date(
     now.getFullYear(),
     now.getMonth(),
     now.getDate(),
@@ -265,19 +259,98 @@ export function evaluateAutostart(
     0
   );
 
-  if (now.getTime() >= scheduledDate.getTime()) {
-    const startTs = autostart.startFromScheduledTime ? scheduledDate.getTime() : now.getTime();
-    const startD = new Date(startTs);
-    const hh = String(startD.getHours()).padStart(2, '0');
-    const mm = String(startD.getMinutes()).padStart(2, '0');
+  if (candidate.getTime() <= now.getTime()) {
+    candidate.setDate(candidate.getDate() + 1);
+  }
+
+  return candidate.getTime();
+}
+
+/**
+ * Evaluates whether autostart should trigger right now.
+ *
+ * How it works:
+ * 1. User enables autostart for e.g. "08:00". `nextTriggerTimestamp` is set to the next upcoming 08:00.
+ * 2. When `now >= nextTriggerTimestamp` (whether the app is open in the background at 08:00 OR the user opens
+ *    the app later in the day after 08:00), the timer automatically starts counting from `nextTriggerTimestamp` (08:00)!
+ * 3. `nextTriggerTimestamp` is immediately advanced to the following day's 08:00, so when the user clicks Stop,
+ *    it will NEVER re-trigger for the same shift.
+ */
+export function evaluateAutostart(
+  autostart: AutostartConfig,
+  activeSession: ActiveSession | null,
+  now: Date
+): {
+  shouldStart: boolean;
+  startTimestamp: number;
+  startTimeFormatted: string;
+  startDate: string;
+  nextTriggerTimestamp: number | null;
+} {
+  if (!autostart.enabled || !autostart.time) {
     return {
-      shouldStart: true,
-      startTimestamp: startTs,
-      startTimeFormatted: `${hh}:${mm}`,
+      shouldStart: false,
+      startTimestamp: 0,
+      startTimeFormatted: '',
+      startDate: '',
+      nextTriggerTimestamp: null,
     };
   }
 
-  return { shouldStart: false, startTimestamp: 0, startTimeFormatted: '' };
+  if (activeSession && activeSession.isRunning) {
+    return {
+      shouldStart: false,
+      startTimestamp: 0,
+      startTimeFormatted: '',
+      startDate: '',
+      nextTriggerTimestamp: autostart.nextTriggerTimestamp,
+    };
+  }
+
+  // If nextTriggerTimestamp was not initialized yet, initialize it relative to now
+  if (!autostart.nextTriggerTimestamp) {
+    return {
+      shouldStart: false,
+      startTimestamp: 0,
+      startTimeFormatted: '',
+      startDate: '',
+      nextTriggerTimestamp: computeNextAutostartTimestamp(autostart.time, now),
+    };
+  }
+
+  if (now.getTime() >= autostart.nextTriggerTimestamp) {
+    const startTs = autostart.nextTriggerTimestamp;
+    const startD = new Date(startTs);
+    const startDateStr = toDateString(startD);
+    const nextFutureTs = computeNextAutostartTimestamp(autostart.time, now);
+
+    // Prevent starting if user already manually stopped a session after this trigger time
+    if (autostart.lastStoppedDate === startDateStr && autostart.lastTriggeredDate === startDateStr) {
+      return {
+        shouldStart: false,
+        startTimestamp: 0,
+        startTimeFormatted: '',
+        startDate: '',
+        nextTriggerTimestamp: nextFutureTs,
+      };
+    }
+
+    return {
+      shouldStart: true,
+      startTimestamp: startTs,
+      startTimeFormatted: toTimeString(startD),
+      startDate: startDateStr,
+      nextTriggerTimestamp: nextFutureTs,
+    };
+  }
+
+  return {
+    shouldStart: false,
+    startTimestamp: 0,
+    startTimeFormatted: '',
+    startDate: '',
+    nextTriggerTimestamp: autostart.nextTriggerTimestamp,
+  };
 }
 
 /**
@@ -298,65 +371,23 @@ export function computeDurationFromTimes(startTime: string, endTime: string): nu
 }
 
 /**
- * Generates initial seed data with 3 previous weeks in archive and sample entries in current week
- * so the user immediately sees the weekly chart and 3-week history archive in action.
+ * Creates a clean, completely empty initial state (0 hours, 0 PLN, no demo entries)
+ * when the user installs or opens the app for the first time.
  */
 export function createInitialSeedState(now: Date): AppStorageState {
   const { monday: currentMonday } = getWeekBounds(now);
-  const currentMondayDate = parseDateString(currentMonday);
-
-  // Create 3 previous weeks
-  const prevWeeks: ArchivedWeek[] = [1, 2, 3].map((weeksAgo) => {
-    const mDate = new Date(currentMondayDate);
-    mDate.setDate(currentMondayDate.getDate() - weeksAgo * 7);
-    const { monday, sunday } = getWeekBounds(mDate);
-    const hoursMap: Record<number, number> = { 1: 40, 2: 38.5, 3: 42 };
-    const totalSeconds = Math.round((hoursMap[weeksAgo] || 40) * 3600);
-    return {
-      weekKey: monday,
-      startDate: monday,
-      endDate: sunday,
-      totalSeconds,
-      totalEarnings: calculateEarnings(totalSeconds, DEFAULT_HOURLY_RATE),
-      entriesCount: 5,
-    };
-  });
-
-  // Create 2 entries in the current week (Monday & Tuesday if applicable, or Monday)
-  const monStr = currentMonday;
-  const tueDate = new Date(currentMondayDate);
-  tueDate.setDate(currentMondayDate.getDate() + 1);
-  const tueStr = toDateString(tueDate);
-
-  const sampleEntries: WorkEntry[] = [
-    {
-      id: 'seed-mon-1',
-      date: monStr,
-      startTime: '08:00',
-      endTime: '16:00',
-      durationSeconds: 8 * 3600,
-      note: 'Praca standardowa (zmiana dzienna)',
-    },
-    {
-      id: 'seed-tue-1',
-      date: tueStr,
-      startTime: '08:00',
-      endTime: '15:30',
-      durationSeconds: 7.5 * 3600,
-      note: 'Realizacja zadań + raport',
-    },
-  ];
 
   return {
     hourlyRate: DEFAULT_HOURLY_RATE,
     currentWeekKey: currentMonday,
-    entries: sampleEntries,
-    archivedWeeks: prevWeeks,
+    entries: [],
+    archivedWeeks: [],
     autostart: {
       enabled: false,
       time: '08:00',
-      startFromScheduledTime: true,
+      nextTriggerTimestamp: null,
       lastTriggeredDate: null,
+      lastStoppedDate: null,
     },
     activeSession: null,
   };

@@ -1,30 +1,57 @@
 import React from 'react';
 import { AlarmClock } from 'lucide-react';
-import type { AutostartConfig } from '../utils/timeLogic';
+import {
+  computeNextAutostartTimestamp,
+  toDateString,
+  type AutostartConfig,
+  type ActiveSession,
+} from '../utils/timeLogic';
 
 interface AutostartCardProps {
   autostart: AutostartConfig;
+  activeSession: ActiveSession | null;
   onUpdateAutostart: (updated: AutostartConfig) => void;
 }
 
 export const AutostartCard: React.FC<AutostartCardProps> = ({
   autostart,
+  activeSession,
   onUpdateAutostart,
 }) => {
   const handleToggle = (enabled: boolean) => {
+    const now = new Date();
     onUpdateAutostart({
       ...autostart,
       enabled,
-      lastTriggeredDate: enabled ? null : autostart.lastTriggeredDate,
+      nextTriggerTimestamp: enabled
+        ? computeNextAutostartTimestamp(autostart.time, now)
+        : null,
     });
   };
 
   const handleTimeChange = (newTime: string) => {
+    const now = new Date();
     onUpdateAutostart({
       ...autostart,
       time: newTime,
-      lastTriggeredDate: null,
+      nextTriggerTimestamp: autostart.enabled
+        ? computeNextAutostartTimestamp(newTime, now)
+        : null,
     });
+  };
+
+  const getScheduleDescription = (): string => {
+    if (activeSession?.isRunning && activeSession.autoStarted) {
+      return `Włączono automatycznie o ${activeSession.startTimeFormatted} · Stop zawsze ręczny`;
+    }
+    if (!autostart.enabled || !autostart.nextTriggerTimestamp) {
+      return 'Ustaw godzinę — licznik sam wystartuje w tle o tej porze';
+    }
+    const now = new Date();
+    const triggerDate = new Date(autostart.nextTriggerTimestamp);
+    const isToday = toDateString(now) === toDateString(triggerDate);
+    const dayWord = isToday ? 'dzisiaj' : 'jutro';
+    return `Zaplanowano start: ${dayWord} o ${autostart.time} (włączy się samo w tle)`;
   };
 
   return (
@@ -40,8 +67,11 @@ export const AutostartCard: React.FC<AutostartCardProps> = ({
             <h2 className="text-sm font-bold text-slate-900 dark:text-white">
               Autostart pracy
             </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400 break-words">
-              Automatyczny start o wybranej godzinie · Stop zawsze ręczny
+            <p
+              data-testid="autostart-status-text"
+              className="text-xs text-slate-500 dark:text-slate-400 break-words"
+            >
+              {getScheduleDescription()}
             </p>
           </div>
         </div>

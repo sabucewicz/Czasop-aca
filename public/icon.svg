@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F172A" />
+      <stop offset="100%" stop-color="#020617" />
+    </linearGradient>
+    <linearGradient id="emeraldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34D399" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+  </defs>
+
+  <!-- App Icon Rounded Background -->
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
+  <rect x="16" y="16" width="480" height="480" rx="98" fill="none" stroke="#1E293B" stroke-width="6" />
+
+  <!-- Outer Clock Track -->
+  <circle cx="256" cy="240" r="144" fill="none" stroke="#1E293B" stroke-width="26" />
+
+  <!-- Active Emerald Progress Ring -->
+  <circle
+    cx="256"
+    cy="240"
+    r="144"
+    fill="none"
+    stroke="url(#emeraldGrad)"
+    stroke-width="26"
+    stroke-linecap="round"
+    stroke-dasharray="680 905"
+    transform="rotate(-90 256 240)"
+  />
+
+  <!-- Clock Hands -->
+  <line x1="256" y1="240" x2="256" y2="148" stroke="#F8FAFC" stroke-width="20" stroke-linecap="round" />
+  <line x1="256" y1="240" x2="324" y2="276" stroke="#34D399" stroke-width="18" stroke-linecap="round" />
+  <circle cx="256" cy="240" r="18" fill="#10B981" />
+  <circle cx="256" cy="240" r="8" fill="#FFFFFF" />
+
+  <!-- Bottom PLN Pill Badge -->
+  <rect x="156" y="396" width="200" height="58" rx="29" fill="url(#emeraldGrad)" />
+  <text
+    x="256"
+    y="435"
+    text-anchor="middle"
+    fill="#FFFFFF"
+    font-family="system-ui, -apple-system, sans-serif"
+    font-weight="800"
+    font-size="34"
+    letter-spacing="1"
+  >
+    ZŁ / H
+  </text>
+</svg>

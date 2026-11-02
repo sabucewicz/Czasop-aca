@@ -10,9 +10,11 @@ import {
   DEFAULT_HOURLY_RATE,
   MAX_ARCHIVED_WEEKS,
   toDateString,
+  toTimeString,
   getWeekBounds,
   checkAndRolloverWeek,
   evaluateAutostart,
+  computeNextAutostartTimestamp,
   summarizeWeekEntries,
   archiveWeekWithCap,
   createInitialSeedState,
@@ -21,20 +23,28 @@ import {
   type AutostartConfig,
 } from './utils/timeLogic';
 
-const STORAGE_KEY = 'czasoplaca_storage_v1';
+const LEGACY_STORAGE_KEY = 'czasoplaca_storage_v1';
+const STORAGE_KEY = 'czasoplaca_storage_v2';
 const THEME_KEY = 'czasoplaca_theme_v1';
 
 function loadStateFromStorage(): AppStorageState {
   const now = new Date();
   try {
+    // Clean up old v1 storage that contained demo seed entries
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      const seed = createInitialSeedState(now);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(seed));
-      return seed;
+      const emptyState = createInitialSeedState(now);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(emptyState));
+      return emptyState;
     }
     const parsed = JSON.parse(raw) as Partial<AppStorageState>;
     const { weekKey } = getWeekBounds(now);
+    const rawAutostart = parsed.autostart;
+    const enabled = Boolean(rawAutostart?.enabled);
+    const time = rawAutostart?.time || '08:00';
+
     const hydrated: AppStorageState = {
       hourlyRate:
         typeof parsed.hourlyRate === 'number' && parsed.hourlyRate > 0
@@ -45,11 +55,17 @@ function loadStateFromStorage(): AppStorageState {
       archivedWeeks: Array.isArray(parsed.archivedWeeks)
         ? parsed.archivedWeeks.slice(0, MAX_ARCHIVED_WEEKS)
         : [],
-      autostart: parsed.autostart || {
-        enabled: false,
-        time: '08:00',
-        startFromScheduledTime: true,
-        lastTriggeredDate: null,
+      autostart: {
+        enabled,
+        time,
+        nextTriggerTimestamp:
+          typeof rawAutostart?.nextTriggerTimestamp === 'number'
+            ? rawAutostart.nextTriggerTimestamp
+            : enabled
+              ? computeNextAutostartTimestamp(time, now)
+              : null,
+        lastTriggeredDate: rawAutostart?.lastTriggeredDate || null,
+        lastStoppedDate: rawAutostart?.lastStoppedDate || null,
       },
       activeSession: parsed.activeSession || null,
     };
@@ -111,19 +127,30 @@ export default function App() {
         );
 
         if (autoCheck.shouldStart) {
-          const todayStr = toDateString(currentNow);
           return {
             ...afterRollover,
             autostart: {
               ...afterRollover.autostart,
-              lastTriggeredDate: todayStr,
+              nextTriggerTimestamp: autoCheck.nextTriggerTimestamp,
+              lastTriggeredDate: autoCheck.startDate,
             },
             activeSession: {
               isRunning: true,
               startTimestamp: autoCheck.startTimestamp,
               startTimeFormatted: autoCheck.startTimeFormatted,
-              date: todayStr,
+              date: autoCheck.startDate,
               autoStarted: true,
+            },
+          };
+        }
+
+        // If nextTriggerTimestamp was initialized or updated without starting
+        if (autoCheck.nextTriggerTimestamp !== afterRollover.autostart.nextTriggerTimestamp) {
+          return {
+            ...afterRollover,
+            autostart: {
+              ...afterRollover.autostart,
+              nextTriggerTimestamp: autoCheck.nextTriggerTimestamp,
             },
           };
         }
@@ -154,8 +181,6 @@ export default function App() {
 
   const handleStart = () => {
     const now = new Date();
-    const hh = String(now.getHours()).padStart(2, '0');
-    const mm = String(now.getMinutes()).padStart(2, '0');
     const dStr = toDateString(now);
 
     setNowMs(now.getTime());
@@ -164,7 +189,7 @@ export default function App() {
       activeSession: {
         isRunning: true,
         startTimestamp: now.getTime(),
-        startTimeFormatted: `${hh}:${mm}`,
+        startTimeFormatted: toTimeString(now),
         date: dStr,
         autoStarted: false,
       },
@@ -172,29 +197,47 @@ export default function App() {
   };
 
   const handleStop = () => {
-    if (!state.activeSession?.isRunning) return;
     const now = new Date();
-    const hh = String(now.getHours()).padStart(2, '0');
-    const mm = String(now.getMinutes()).padStart(2, '0');
-    const durationSec = Math.max(
-      1,
-      Math.floor((now.getTime() - state.activeSession.startTimestamp) / 1000)
-    );
+    const todayDateStr = toDateString(now);
 
-    const newEntry: WorkEntry = {
-      id: `entry-${now.getTime()}`,
-      date: state.activeSession.date || toDateString(now),
-      startTime: state.activeSession.startTimeFormatted,
-      endTime: `${hh}:${mm}`,
-      durationSeconds: durationSec,
-      isAutoStarted: state.activeSession.autoStarted,
-    };
+    setNowMs(now.getTime());
+    setState((prev) => {
+      if (!prev.activeSession?.isRunning) return prev;
 
-    setState((prev) => ({
-      ...prev,
-      entries: [newEntry, ...prev.entries],
-      activeSession: null,
-    }));
+      const durationSec = Math.max(
+        1,
+        Math.floor((now.getTime() - prev.activeSession.startTimestamp) / 1000)
+      );
+
+      const sessionDate = prev.activeSession.date || todayDateStr;
+
+      const newEntry: WorkEntry = {
+        id: `entry-${now.getTime()}`,
+        date: sessionDate,
+        startTime: prev.activeSession.startTimeFormatted,
+        endTime: toTimeString(now),
+        durationSeconds: durationSec,
+        isAutoStarted: prev.activeSession.autoStarted,
+      };
+
+      // Advance autostart nextTriggerTimestamp strictly to the future (> now)
+      // and record lastStoppedDate so it NEVER re-triggers after Stop!
+      const nextFutureTrigger = prev.autostart.enabled
+        ? computeNextAutostartTimestamp(prev.autostart.time, now)
+        : null;
+
+      return {
+        ...prev,
+        entries: [newEntry, ...prev.entries],
+        activeSession: null,
+        autostart: {
+          ...prev.autostart,
+          nextTriggerTimestamp: nextFutureTrigger,
+          lastTriggeredDate: sessionDate,
+          lastStoppedDate: todayDateStr,
+        },
+      };
+    });
   };
 
   const handleUpdateAutostart = (updated: AutostartConfig) => {
@@ -231,14 +274,14 @@ export default function App() {
 
   const handleRolloverCurrentWeek = () => {
     setState((prev) => {
+      if (prev.entries.length === 0) return prev;
       const summary = summarizeWeekEntries(prev.currentWeekKey, prev.entries, prev.hourlyRate);
-      const archiveEntry =
-        prev.archivedWeeks.some((w) => w.weekKey === summary.weekKey) && prev.entries.length > 0
-          ? {
-              ...summary,
-              weekKey: `${summary.weekKey}-zapis-${Date.now().toString().slice(-3)}`,
-            }
-          : summary;
+      const archiveEntry = prev.archivedWeeks.some((w) => w.weekKey === summary.weekKey)
+        ? {
+            ...summary,
+            weekKey: `${summary.weekKey}-zapis-${Date.now().toString().slice(-3)}`,
+          }
+        : summary;
 
       const updatedArchive = archiveWeekWithCap(
         prev.archivedWeeks,
@@ -281,6 +324,7 @@ export default function App() {
 
         <AutostartCard
           autostart={state.autostart}
+          activeSession={state.activeSession}
           onUpdateAutostart={handleUpdateAutostart}
         />
 

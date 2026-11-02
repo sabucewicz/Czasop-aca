@@ -7,31 +7,35 @@ import {
   archiveWeekWithCap,
   checkAndRolloverWeek,
   evaluateAutostart,
+  computeNextAutostartTimestamp,
   computeDurationFromTimes,
+  createInitialSeedState,
   formatHMS,
   type ArchivedWeek,
   type AppStorageState,
 } from './timeLogic';
 
+test('createInitialSeedState starts completely empty with 0 entries and 0 archived weeks', () => {
+  const state = createInitialSeedState(new Date(2026, 10, 2, 10, 0, 0));
+  assert.equal(state.entries.length, 0);
+  assert.equal(state.archivedWeeks.length, 0);
+  assert.equal(state.activeSession, null);
+  assert.equal(state.autostart.enabled, false);
+});
+
 test('calculateEarnings multiplies worked hours by 31.50 PLN accurately', () => {
-  // 1 hour = 3600s -> 31.50 zł
   assert.equal(calculateEarnings(3600, DEFAULT_HOURLY_RATE), 31.5);
-  // 8 hours = 28800s -> 252.00 zł
   assert.equal(calculateEarnings(8 * 3600, DEFAULT_HOURLY_RATE), 252.0);
-  // 40 hours -> 1260.00 zł
   assert.equal(calculateEarnings(40 * 3600, DEFAULT_HOURLY_RATE), 1260.0);
-  // 30 minutes -> 15.75 zł
   assert.equal(calculateEarnings(1800, DEFAULT_HOURLY_RATE), 15.75);
 });
 
 test('getWeekBounds returns Monday to Sunday for any day of week including Sunday', () => {
-  // 2026-11-01 is a Sunday
   const sun = new Date(2026, 10, 1, 12, 0, 0);
   const bounds = getWeekBounds(sun);
   assert.equal(bounds.monday, '2026-10-26');
   assert.equal(bounds.sunday, '2026-11-01');
 
-  // 2026-11-02 is a Monday
   const mon = new Date(2026, 10, 2, 9, 0, 0);
   const nextBounds = getWeekBounds(mon);
   assert.equal(nextBounds.monday, '2026-11-02');
@@ -79,7 +83,6 @@ test('archiveWeekWithCap keeps at most 3 previous weeks and removes the 4th olde
   assert.equal(after4th[0].weekKey, '2026-10-26');
   assert.equal(after4th[1].weekKey, '2026-10-19');
   assert.equal(after4th[2].weekKey, '2026-10-12');
-  // w1 ('2026-10-05') was pruned!
   assert.equal(after4th.some((w) => w.weekKey === '2026-10-05'), false);
 });
 
@@ -100,13 +103,13 @@ test('checkAndRolloverWeek resets current week entries and pushes previous week 
     autostart: {
       enabled: false,
       time: '08:00',
-      startFromScheduledTime: true,
+      nextTriggerTimestamp: null,
       lastTriggeredDate: null,
+      lastStoppedDate: null,
     },
     activeSession: null,
   };
 
-  // Next Monday: 2026-11-02
   const nextMonday = new Date(2026, 10, 2, 10, 0, 0);
   const rolled = checkAndRolloverWeek(initialState, nextMonday);
 
@@ -117,34 +120,61 @@ test('checkAndRolloverWeek resets current week entries and pushes previous week 
   assert.equal(rolled.archivedWeeks[0].totalEarnings, 252);
 });
 
-test('evaluateAutostart triggers when enabled and current time >= target time and not triggered today', () => {
-  const now = new Date(2026, 10, 1, 9, 30, 0); // 09:30
-  const result = evaluateAutostart(
+test('Autostart schedules for tomorrow when configured after target hour, and never re-triggers after Stop', () => {
+  // User configures Autostart at 18:00 on Nov 1 for "08:00"
+  const evening = new Date(2026, 10, 1, 18, 0, 0);
+  const nextTrigger = computeNextAutostartTimestamp('08:00', evening);
+  const expectedTomorrow8am = new Date(2026, 10, 2, 8, 0, 0).getTime();
+  assert.equal(nextTrigger, expectedTomorrow8am);
+
+  // At 18:05 on Nov 1, it must NOT start prematurely
+  const eveningLater = new Date(2026, 10, 1, 18, 5, 0);
+  const checkBefore = evaluateAutostart(
     {
       enabled: true,
       time: '08:00',
-      startFromScheduledTime: true,
+      nextTriggerTimestamp: nextTrigger,
       lastTriggeredDate: null,
+      lastStoppedDate: null,
     },
     null,
-    now
+    eveningLater
   );
+  assert.equal(checkBefore.shouldStart, false);
 
-  assert.equal(result.shouldStart, true);
-  assert.equal(result.startTimeFormatted, '08:00');
-
-  // Does not trigger again on the same day
-  const secondCheck = evaluateAutostart(
+  // Next day (Nov 2) at 10:30 AM (user didn't even open app at 08:00, opens it at 10:30 AM):
+  // Autostart triggers from 08:00 AM!
+  const nextMorning = new Date(2026, 10, 2, 10, 30, 0);
+  const checkMorning = evaluateAutostart(
     {
       enabled: true,
       time: '08:00',
-      startFromScheduledTime: true,
-      lastTriggeredDate: '2026-11-01',
+      nextTriggerTimestamp: nextTrigger,
+      lastTriggeredDate: null,
+      lastStoppedDate: null,
     },
     null,
-    now
+    nextMorning
   );
-  assert.equal(secondCheck.shouldStart, false);
+  assert.equal(checkMorning.shouldStart, true);
+  assert.equal(checkMorning.startTimestamp, expectedTomorrow8am);
+  assert.equal(checkMorning.startTimeFormatted, '08:00');
+  assert.equal(checkMorning.startDate, '2026-11-02');
+
+  // After user clicks Stop at 16:00 on Nov 2, evaluateAutostart must NOT re-trigger on Nov 2!
+  const afterStopTime = new Date(2026, 10, 2, 16, 1, 0);
+  const checkAfterStop = evaluateAutostart(
+    {
+      enabled: true,
+      time: '08:00',
+      nextTriggerTimestamp: checkMorning.nextTriggerTimestamp,
+      lastTriggeredDate: '2026-11-02',
+      lastStoppedDate: '2026-11-02',
+    },
+    null,
+    afterStopTime
+  );
+  assert.equal(checkAfterStop.shouldStart, false);
 });
 
 test('computeDurationFromTimes and formatHMS work accurately', () => {
